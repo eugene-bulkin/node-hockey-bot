@@ -48,7 +48,7 @@ var Bot = function() {
   // This escapes any characters that may be in the command prefix for use in a
   // regular expression. See http://stackoverflow.com/a/3561711/28429
   var prefix = config.cmdPrefix.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-  this.cmdRegex = new RegExp('^' + prefix + '([^\\s]+)(?: (.+)|$)');
+  this.cmdRegex = new RegExp('^' + prefix + '([a-zA-Z][a-zA-Z0-9]*)(?:\s*(.*)|$)');
 
   // Load commands into bot
   this.loadCommands();
