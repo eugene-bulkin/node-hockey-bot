@@ -1,4 +1,5 @@
 var irc = require('irc');
+var Q = require('q');
 
 /*
  * Command line arguments, e.g. node bot.js -e testing
@@ -42,6 +43,15 @@ var Bot = function() {
   });
 
   this.setupListeners();
+
+  // Create regular expression for matching commands.
+  // This escapes any characters that may be in the command prefix for use in a
+  // regular expression. See http://stackoverflow.com/a/3561711/28429
+  var prefix = config.cmdPrefix.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+  this.cmdRegex = new RegExp('^' + prefix + '([^\\s]+)(?: (.+)|$)');
+
+  // Load commands into bot
+  this.loadCommands();
 };
 
 /*
@@ -59,9 +69,71 @@ Bot.prototype.setupListeners = function() {
   });
   // Handle receiving messages. Can be PM or in channel (depending on to
   // argument)
-  this.client.addListener('message', function(nick, to, text, message) {
-    console.log('Received message from ' + nick + ' to ' + to + ' with content "' + text + '"');
+  this.client.addListener('message', this.onMessage.bind(this));
+};
+
+/*
+ * This is the message handler. See node-irc documentation for description of
+ * parameters.
+ */
+Bot.prototype.onMessage = function(nick, to, text, message) {
+  var cmdExec = this.cmdRegex.exec(text);
+  // If there was no command, we don't care what was said
+  if(!cmdExec) {
+    return;
+  }
+  // Pull the information about the command from the regular expression
+  var command = cmdExec[1];
+  var data = cmdExec[2] || '';
+  // Store some information about the user
+  var user = {
+    nickname: message.nick,
+    username: message.user,
+    host: message.host
+  };
+  /*
+   * If to is the same as our nickname, that means it came from a PM, so we want
+   * to send it back to that user. Otherwise it's a channel, so that's where it
+   * belongs.
+   */
+  var target = (to === server.nickname) ? user.nickname : to;
+
+  /*
+   * Here we wrap the command call with a promise. If the command call is
+   * synchronous, nothing interesting happens. But if we want to do something
+   * specifically after a command is done executing, we want to ensure it
+   * happens afterwards, so we cover asynchronous commands as well. This means
+   * any asynchronous commands need to return a promise.
+   *
+   * The done handler does two things:
+   * 1. Ensures that any uncaught exceptions are caught and logged
+   * 2. Provides a way for commands to send back a message for logging
+   */
+  Q.fcall(function() {
+    if (this.commands[command]) {
+      return this.commands[command].call(this, data, user, target);
+    } else {
+      return user.nickname + " tried to use the nonexistent command '" + command + "'.";
+    }
+  }.bind(this)).done(function(message) {
+    if(message) {
+      console.log(message);
+    }
+  }, function(err) {
+    console.log("The following error occurred while trying to run the command '" + command + "' with arguments '" + data + "': " + err.message);
   });
+};
+
+/*
+ * Loads all the commands the bot will use.
+ */
+Bot.prototype.loadCommands = function() {
+  this.commands = {
+    "about": function(data, user, target) {
+      this.client.say(target, "I'm a bot!");
+      return user.nickname + " asked about me.";
+    }
+  };
 };
 
 // Create the bot and join the server and relevant channels

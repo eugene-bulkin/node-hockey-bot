@@ -1,4 +1,5 @@
 {
+  "cmdPrefix": "!",
   "environments": {
     "testing": {
       "server": "localhost",

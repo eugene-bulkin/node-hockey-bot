@@ -8,8 +8,9 @@
     "url": "https://github.com/eugene-bulkin/node-hockey-bot.git"
   },
   "dependencies": {
-    "irc": "*",
-    "minimist": "*"
+    "irc": "0.x.x",
+    "minimist": "0.x.x",
+    "q": "1.x.x"
   },
   "license": "Apache v2"
 }
