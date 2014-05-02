@@ -1,0 +1,9 @@
+{
+  "environments": {
+    "testing": {
+      "server": "localhost",
+      "channels": [],
+      "nickname": "nodehockeybot"
+    }
+  }
+}
