@@ -10,7 +10,9 @@
   "dependencies": {
     "irc": "0.x.x",
     "minimist": "0.x.x",
-    "q": "1.x.x"
+    "q": "1.x.x",
+    "q-io": "1.x.x",
+    "moment": "2.x.x"
   },
   "license": "Apache v2"
 }

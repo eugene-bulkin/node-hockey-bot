@@ -1,6 +1,14 @@
 {
+  "logging": {
+    // the directory in which logs will go
+    "directory": "logs",
+    // can be ALL, ERROR, or LOG (where ALL is both of the latter two)
+    "level": "ALL"
+  },
+  // the prefix with which all commands start
   "cmdPrefix": "!",
   "environments": {
+    // testing is the default environment, so make sure this exists!
     "testing": {
       "server": "localhost",
       "channels": [],
