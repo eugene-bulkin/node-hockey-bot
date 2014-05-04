@@ -42,8 +42,12 @@ if (!server) {
  * logging capabilities.
  */
 var Bot = function() {
-  // Make sure we can log things before we do anything else!
-  this.setupLogs().done(function() {
+  // Make sure we can log things before we do anything else! Then
+  // load commands in (which is async)
+  this.setupLogs().then(this.loadCommands.bind(this)).done(function() {
+    // store current nickname
+    this.currentNick = server.nickname;
+
     this.client = new irc.Client(server.server, server.nickname, {
       channels: server.channels
     });
@@ -56,9 +60,6 @@ var Bot = function() {
     // regular expression. See http://stackoverflow.com/a/3561711/28429
     var prefix = config.cmdPrefix.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
     this.cmdRegex = new RegExp('^' + prefix + '([a-zA-Z][a-zA-Z0-9]*)(?:\\s*(.*)|$)');
-
-    // Load commands into bot
-    this.loadCommands();
   }.bind(this));
 };
 
@@ -84,7 +85,7 @@ Bot.prototype.setupLogs = function() {
       return FS.move(pathName, pathName + "." + list.length);
     }
   });
-}
+};
 
 /*
  * What this function does is set up all the IRC client listeners, such as
@@ -93,6 +94,8 @@ Bot.prototype.setupLogs = function() {
 Bot.prototype.setupListeners = function() {
   // This is the event sent by the server when we successfully connect.
   this.client.addListener('registered', function(message) {
+    // this server message tells us what nickname we're actually using
+    this.currentNick = message.args[0];
     this.log('Connected to the server: ' + server.server);
   }.bind(this));
   // This event is sent every time we join a channel.
@@ -128,7 +131,7 @@ Bot.prototype.onMessage = function(nick, to, text, message) {
    * to send it back to that user. Otherwise it's a channel, so that's where it
    * belongs.
    */
-  var target = (to === server.nickname) ? user.nickname : to;
+  var target = (to === this.currentNick) ? user.nickname : to;
 
   /*
    * Here we wrap the command call with a promise. If the command call is
@@ -160,12 +163,42 @@ Bot.prototype.onMessage = function(nick, to, text, message) {
  * Loads all the commands the bot will use.
  */
 Bot.prototype.loadCommands = function() {
-  this.commands = {
-    "about": function(data, user, target) {
-      this.client.say(target, "I'm a bot!");
-      return user.nickname + " asked about me.";
-    }
-  };
+  this.commands = {};
+  /*
+   * WARNING: HACKY
+   *
+   * Node does not support hard reloading required files. As a result, the only
+   * way to ensure we get the newest version of the file is to remove it from
+   * the cache before we re-require it. So what we do is pull all the keys
+   * from the cache that are in the modules directory, then remove them from
+   * the cache. If loadedModules is empty this simply means we haven't loaded
+   * any yet.
+   */
+  var moduleDir = process.env.PWD + "/modules";
+  var loadedModules = Object.keys(require.cache).filter(function(file) {
+    return file.indexOf(moduleDir) === 0;
+  });
+  loadedModules.forEach(function(module) {
+    delete require.cache[module];
+  });
+  // Now we look through the modules list and require them as necessary
+  return FS.list('modules').then(function(list) {
+    var numModules = 0, numFns = 0;
+    list.forEach(function(file) {
+      // we only want JS files here
+      if(file.split(".").pop() !== 'js') {
+        return;
+      }
+      numModules++;
+      var module = require('./modules/' + file);
+      // Combine that module with our internal commands object
+      Object.keys(module).forEach(function(key) {
+        this.commands[key] = module[key];
+        numFns++;
+      }, this);
+    }, this);
+    console.log(numModules + " module(s) loaded with " + numFns + " function(s) total.");
+  }.bind(this));
 };
 
 /*
@@ -182,7 +215,7 @@ Bot.prototype.disconnect = function(message) {
 };
 
 /* Logging here */
-LOG_TYPES = {
+var LOG_TYPES = {
   "ALL": 3,
   "ERROR": 2,
   "LOG": 1
