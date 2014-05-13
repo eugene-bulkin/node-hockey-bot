@@ -2,6 +2,7 @@ var irc = require('irc');
 var Q = require('q');
 var FS = require('q-io/fs');
 var moment = require('moment');
+var QSQL = require('q-sqlite3');
 
 /*
  * Command line arguments, e.g. node bot.js -e testing
@@ -44,7 +45,7 @@ if (!server) {
 var Bot = function() {
   // Make sure we can log things before we do anything else! Then
   // load commands in (which is async)
-  this.setupLogs().then(this.loadCommands.bind(this)).done(function() {
+  this.setupLogs().then(this.loadCommands.bind(this)).then(this.initializeDatabase.bind(this)).done(function() {
     // store current nickname
     this.currentNick = server.nickname;
 
@@ -62,6 +63,22 @@ var Bot = function() {
     this.cmdRegex = new RegExp('^' + prefix + '([a-zA-Z][a-zA-Z0-9]*)(?:\\s*(.*)|$)');
   }.bind(this));
 };
+
+Bot.prototype.initializeDatabase = function() {
+  return QSQL.createDatabase('./db.sqlite').then(function(db) {
+    this.db = db;
+    return this.db;
+  }.bind(this)).then(function(db) {
+    // separate this out here for readability
+    var tables = [
+      "CREATE TABLE IF NOT EXISTS players (id INTEGER PRIMARY KEY, data TEXT)",
+      "CREATE TABLE IF NOT EXISTS player_search (id INTEGER PRIMARY KEY, query TEXT, players_id INTEGER)",
+      "CREATE TABLE IF NOT EXISTS stats_yahoo_reg (id INTEGER PRIMARY KEY, web_id TEXT, data TEXT, players_id INTEGER)"
+    ];
+    return QSQL.exec(db, tables.join("; "));
+  });
+};
+
 
 Bot.prototype.setupLogs = function() {
   // override default log directory with environment-specific one if it exists
@@ -214,6 +231,15 @@ Bot.prototype.disconnect = function(message) {
   return deferred.promise;
 };
 
+/*
+ * Cleans up anything that needs to be cleaned up, like the database.
+ */
+Bot.prototype.cleanUp = function() {
+  if(this.db) {
+    return QSQL.close(this.db);
+  }
+};
+
 /* Logging here */
 var LOG_TYPES = {
   "ALL": 3,
@@ -277,7 +303,8 @@ var bot = new Bot();
 process.on('SIGINT', function(code) {
   Q.all([
     bot.log("Bot manually killed with SIGINT"),
-    bot.disconnect()
+    bot.disconnect(),
+    bot.cleanUp()
   ]).done(function() {
     process.exit(code || 1);
   });
@@ -286,7 +313,8 @@ process.on('SIGINT', function(code) {
 process.on('SIGTERM', function(code) {
   Q.all([
     bot.log("Bot manually killed with SIGTERM"),
-    bot.disconnect()
+    bot.disconnect(),
+    bot.cleanUp()
   ]).done(function() {
     process.exit(code || 1);
   });

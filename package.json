@@ -12,7 +12,11 @@
     "minimist": "0.x.x",
     "q": "1.x.x",
     "q-io": "1.x.x",
-    "moment": "2.x.x"
+    "moment": "2.x.x",
+    "sqlite3": "2.x.x",
+    "q-sqlite3": ">=0.0.2",
+    "cheerio": "^0.16.0",
+    "humanize": ">=0.0.9"
   },
   "license": "Apache v2"
 }
