@@ -43,11 +43,21 @@ if (!server) {
  * logging capabilities.
  */
 var Bot = function() {
+  // store current nickname
+  this.currentNick = server.nickname;
+  // initialize triggers
+  this.triggers = {
+    'before': {},
+    'after': {}
+  };
+  // Create regular expression for matching commands.
+  // This escapes any characters that may be in the command prefix for use in a
+  // regular expression. See http://stackoverflow.com/a/3561711/28429
+  var prefix = config.cmdPrefix.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+  this.cmdRegex = new RegExp('^' + prefix + '([a-zA-Z][a-zA-Z0-9]*)(?:\\s*(.*)|$)');
   // Make sure we can log things before we do anything else! Then
   // load commands in (which is async)
   this.setupLogs().then(this.loadCommands.bind(this)).then(this.initializeDatabase.bind(this)).done(function() {
-    // store current nickname
-    this.currentNick = server.nickname;
 
     this.client = new irc.Client(server.server, server.nickname, {
       channels: server.channels
@@ -55,12 +65,6 @@ var Bot = function() {
 
     // Set up client listeners
     this.setupListeners();
-
-    // Create regular expression for matching commands.
-    // This escapes any characters that may be in the command prefix for use in a
-    // regular expression. See http://stackoverflow.com/a/3561711/28429
-    var prefix = config.cmdPrefix.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-    this.cmdRegex = new RegExp('^' + prefix + '([a-zA-Z][a-zA-Z0-9]*)(?:\\s*(.*)|$)');
   }.bind(this));
 };
 
@@ -161,12 +165,33 @@ Bot.prototype.onMessage = function(nick, to, text, message) {
    * 1. Ensures that any uncaught exceptions are caught and logged
    * 2. Provides a way for commands to send back a message for logging
    */
+  var beforeTriggers = Object.keys(this.triggers.before).every(function(id) {
+    try {
+      return this.triggers.before[id].call(this, data, user, target);
+    } catch(e) {
+      this.logError("The following error occurred while trying to run the command '" + command + "' with arguments '" + data + "': " + err.message);
+      return false;
+    }
+  }, this);
+  if(!beforeTriggers) {
+    return;
+  }
   Q.fcall(function() {
     if (this.commands[command]) {
       return this.commands[command].call(this, data, user, target);
     } else {
       return user.nickname + " tried to use the nonexistent command '" + command + "'.";
     }
+  }.bind(this)).then(function(msg) {
+    Object.keys(this.triggers.after).forEach(function(id) {
+      this.triggers.after[id].call(this, data, user, target);
+    }, this);
+    return msg;
+  }.bind(this), function(e) {
+    Object.keys(this.triggers.after).forEach(function(id) {
+      this.triggers.after[id].call(this, data, user, target);
+    }, this);
+    throw e;
   }.bind(this)).done(function(message) {
     if(message) {
       this.log(message);
@@ -174,6 +199,20 @@ Bot.prototype.onMessage = function(nick, to, text, message) {
   }.bind(this), function(err) {
     this.logError("The following error occurred while trying to run the command '" + command + "' with arguments '" + data + "': " + err.message);
   }.bind(this));
+};
+
+Bot.prototype.registerTrigger = function(time, id, cb) {
+  if (!this.triggers[time] || !id || !cb) {
+    return;
+  }
+  this.triggers[time][id] = cb;
+};
+
+Bot.prototype.removeTrigger = function(time, id) {
+  if (!this.triggers[time] || !id) {
+    return;
+  }
+  delete this.triggers[time][id];
 };
 
 /*
@@ -210,6 +249,10 @@ Bot.prototype.loadCommands = function() {
       var module = require('./modules/' + file);
       // Combine that module with our internal commands object
       Object.keys(module).forEach(function(key) {
+        if (key === '_setup') {
+          module[key].call(this);
+          return;
+        }
         this.commands[key] = module[key];
         numFns++;
       }, this);
@@ -291,6 +334,10 @@ Bot.prototype.logError = function(message) {
   return this.logInternal(message, LOG_TYPES.ERROR);
 };
 
+Bot.prototype.isAdmin = function(user) {
+  return server.admin.indexOf(user.nickname) > -1;
+};
+
 // Create the bot and join the server and relevant channels
 var bot = new Bot();
 
@@ -318,4 +365,8 @@ process.on('SIGTERM', function(code) {
   ]).done(function() {
     process.exit(code || 1);
   });
+});
+
+process.on('uncaughtException', function(e) {
+  bot.logError("Uncaught exception: " + e);
 });

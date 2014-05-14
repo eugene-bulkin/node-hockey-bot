@@ -12,7 +12,8 @@
     "testing": {
       "server": "localhost",
       "channels": [],
-      "nickname": "nodehockeybot"
+      "nickname": "nodehockeybot",
+      "admin": []
     }
   }
 }
