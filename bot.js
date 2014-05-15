@@ -77,7 +77,9 @@ Bot.prototype.initializeDatabase = function() {
     var tables = [
       "CREATE TABLE IF NOT EXISTS players (id INTEGER PRIMARY KEY, data TEXT)",
       "CREATE TABLE IF NOT EXISTS player_search (id INTEGER PRIMARY KEY, query TEXT, players_id INTEGER)",
-      "CREATE TABLE IF NOT EXISTS stats_yahoo_reg (id INTEGER PRIMARY KEY, web_id TEXT, data TEXT, players_id INTEGER)"
+      "CREATE TABLE IF NOT EXISTS stats_yahoo_reg (id INTEGER PRIMARY KEY, web_id TEXT, data TEXT, players_id INTEGER)",
+      "CREATE TABLE IF NOT EXISTS stats_es_reg (id INTEGER PRIMARY KEY, web_id TEXT, data TEXT, players_id INTEGER)",
+      "CREATE TABLE IF NOT EXISTS stats_cap (id INTEGER PRIMARY KEY, web_id TEXT, data TEXT, players_id INTEGER)"
     ];
     return QSQL.exec(db, tables.join("; "));
   });
