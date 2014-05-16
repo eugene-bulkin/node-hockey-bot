@@ -50,6 +50,8 @@ var Bot = function() {
     'before': {},
     'after': {}
   };
+  // Set up help dictionary
+  this.help = {};
   // Create regular expression for matching commands.
   // This escapes any characters that may be in the command prefix for use in a
   // regular expression. See http://stackoverflow.com/a/3561711/28429
@@ -254,6 +256,11 @@ Bot.prototype.loadCommands = function() {
         if (key === '_setup') {
           module[key].call(this);
           return;
+        } else if(key === '_help') {
+          for(var helpKey in module[key]) {
+            this.help[helpKey] = module[key][helpKey];
+          }
+          return;
         }
         this.commands[key] = module[key];
         numFns++;
@@ -352,7 +359,7 @@ var bot = new Bot();
 process.on('SIGINT', function(code) {
   Q.all([
     bot.log("Bot manually killed with SIGINT"),
-    bot.disconnect(),
+    bot.disconnect('Adios!'),
     bot.cleanUp()
   ]).done(function() {
     process.exit(code || 1);

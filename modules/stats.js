@@ -609,5 +609,11 @@ module.exports = {
       this.client.say(target, "No game found.");
       return user.nickname + " asked for the fancy game summary for '" + data + "', but that was not found.";
     }.bind(this));
+  },
+  "_help": {
+    "cap": "Display cap information about a player. Usage: cap player_name",
+    "astats": "Display advanced stats for a player. Usage: astats player_name",
+    "stats": "Display stats for a player. Usage: stats player_name",
+    "asummary": "Display an advanced summary for a game. Usage: asummary [YYYYMMDD] team_abbreviation",
   }
 };

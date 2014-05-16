@@ -1,6 +1,6 @@
 {
   "name": "node-hockey-bot",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "Eugene Bulkin <eugene@eugenebulkin.name>",
   "description": "an IRC bot for hockey information",
   "repository": {

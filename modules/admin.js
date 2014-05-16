@@ -72,5 +72,10 @@ module.exports = {
       this.client.say(target, "Done.");
       return user.nickname + " reloaded my modules.";
     }.bind(this));
+  },
+  "_help": {
+    "~throttle": "Prevents a user from sending more than 3 commands in a short period of time. Usage: throttle [-]n nickname or throttle [-]h host",
+    "~ignore": "Ignores a user's command requests. Usage: throttle [-]n nickname or throttle [-]h host",
+    "~reload": "Reloads the internal modules."
   }
 };
