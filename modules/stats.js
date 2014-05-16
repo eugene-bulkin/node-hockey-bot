@@ -4,6 +4,7 @@ var HTTP = require('q-io/http');
 var QSQL = require('q-sqlite3');
 var cheerio = require('cheerio');
 var humanize = require('humanize');
+var moment = require('moment');
 
 var getFullPlayerName = function(data) {
   var oneName = data.length === 1 && data[0].toLowerCase();
@@ -314,6 +315,47 @@ var formatDraft = function(draft) {
   return 'Drafted ' + draft.year + ' by the ' + draft.team + ', ' + humanize.ordinal(draft.round) + ' round (' + humanize.ordinal(draft.overall) + ' pick)';
 };
 
+var abbrHash = {
+  "ANA":"Ducks",
+  "SJS":"Sharks",
+  "LAK":"Kings",
+  "PHX":"Coyotes",
+  "VAN":"Canucks",
+  "CGY":"Flames",
+  "EDM":"Oilers",
+  "COL":"Avalanche",
+  "STL":"Blues",
+  "CHI":"Blackhawks",
+  "MIN":"Wild",
+  "DAL":"Stars",
+  "NSH":"Predators",
+  "WPG":"Jets",
+  "BOS":"Bruins",
+  "TBL":"Lightning",
+  "MTL":"Canadiens",
+  "DET":"Red Wings",
+  "OTT":"Senators",
+  "TOR":"Maple Leafs",
+  "FLA":"Panthers",
+  "BUF":"Sabres",
+  "PIT":"Penguins",
+  "NYR":"Rangers",
+  "PHI":"Flyers",
+  "CBJ":"Blue Jackets",
+  "WSH":"Capitals",
+  "NJD":"Devils",
+  "CAR":"Hurricanes",
+  "NYI":"Islanders"
+};
+
+var reverseAbbr = function(teamName) {
+  return Object.keys(abbrHash).filter(function(key) {
+    return abbrHash[key] == teamName;
+  })[0];
+};
+
+var int = function(num) { return parseInt(num, 10); };
+
 module.exports = {
   "cap": function(data, user, target) {
     var searchQuery = data.toLowerCase();
@@ -473,6 +515,99 @@ module.exports = {
         this.client.say(target, "Sorry, there was an error processing your request. It's possible Yahoo!'s stats page is broken.");
         this.logError(e.message);
       }
+    }.bind(this));
+  },
+  "asummary": function(data, user, target) {
+    var ds = data.split(" ");
+    if(data.split(" ").length > 1) {
+      // requested a date!
+      var date = ds[0], teamAbbr = ds[1].toUpperCase();
+      if(!date.match(/^[\d]{8}$/)) {
+        this.client.say(target, "The date specified is incorrectly formatted. Your request should look like ,asummary [YYYYMMDD] abr");
+        return user.nickname + " asked for the fancy game summary for '" + data + "', but the date was badly formatted.";
+      }
+      var date = moment(date, "YYYYMMDD");
+    } else {
+      teamAbbr = data.toUpperCase();
+    }
+    if(abbrHash[teamAbbr]) {
+      chosenTeam = abbrHash[teamAbbr].toLowerCase();
+    } else {
+      chosenTeam = data.toLowerCase();
+    }
+    if(!date) {
+      var page = HTTP.read('http://www.extraskater.com/').then(function(b) {
+        var $ = cheerio.load(b.toString());
+        var gamesToday = $('h3').filter(function() { return $(this).text().indexOf('Games for') > -1; }).next('div.row');
+        var chosen = Array.prototype.filter.call(gamesToday.find('table'), function(table) {
+          var teams = $(table).find('td:not(.game-status):not(.number-right)');
+          teams = Array.prototype.map.call(teams, function(td) { return $(td).text().toLowerCase(); });
+          return teams.indexOf(chosenTeam) > -1;
+        })[0];
+        if(chosen) {
+          var uri = 'http://www.extraskater.com' + $(chosen).attr('onclick').replace("location.href='",'').replace("'",'');
+          return HTTP.read(uri);
+        } else {
+          throw new Error();
+        }
+      });
+    } else {
+      var url = 'http://www.extraskater.com/games/all?month=' + date.format('MMM').toLowerCase() + '&season='  + date.format('YYYY');
+      var page = HTTP.read(url).then(function(b) {
+        var $ = cheerio.load(b.toString());
+
+        var label = $("#games-list li strong").filter(function() { return $(this).text() === date.format('ddd. MMM. D, 2014') });
+        if(label && label.parent()) {
+          label = label.parent();
+        }
+        var games = [], curGame = label, link;
+        while(curGame = curGame.next()) {
+          if(curGame.children('strong').length) break;
+          link = curGame.children('a');
+          if(link.text().toLowerCase().indexOf(chosenTeam) > -1) {
+            return HTTP.read('http://www.extraskater.com' + link.attr('href'));
+          }
+        }
+        throw new Error('no game found');
+      });
+    }
+    return page.then(function(b) {
+      var $ = cheerio.load(b.toString());
+
+      var titleParse = $('h2').text().trim().match(/^(\d{4}-\d{2}-\d{2}): (.+) (\d+) at (.+) (\d+)( - (\d+:\d+) (\d\w+))?/);
+      var gameInfo = reverseAbbr(titleParse[2]) + " " + titleParse[3] + " " + reverseAbbr(titleParse[4]) + " " + titleParse[5] + " (";
+      gameInfo += (titleParse[6]) ? titleParse[6] + " " + titleParse[7] : "FINAL";
+      gameInfo += ")";
+
+      var stats = {};
+      var idx = Array.prototype.map.call($('tr.team-game-stats-all').find('td a'), function(el, i){ return [$(el).text(), i] }).filter(function(pair) { return pair[0].indexOf(titleParse[2]) > -1; })[0][1];
+      Array.prototype.forEach.call($($('tr.team-game-stats-all')[idx]).children('td.number-right'), function(td, i) {
+        if(KEYS.esSummary[i]) {
+          stats[KEYS.esSummary[i]] = $(td).text();
+        }
+      });
+
+      var pdoA = humanize.numberFormat(100 * (int(stats.gf) / int(stats.sf) + 1 - int(stats.ga) / int(stats.sa)), 1);
+      var pdoH = humanize.numberFormat(100 * (int(stats.ga) / int(stats.sa) + 1 - int(stats.gf) / int(stats.sf)), 1);
+      var shA = humanize.numberFormat(100 * int(stats.gf) / int(stats.sf), 1);
+      var shH = humanize.numberFormat(100 * int(stats.ga) / int(stats.sa), 1);
+      var svA = humanize.numberFormat(100 * (1 - int(stats.ga) / int(stats.sa)), 1);
+      var svH = humanize.numberFormat(100 * (1 - int(stats.gf) / int(stats.sf)), 1);
+
+      var summary = [
+        gameInfo,
+        "SOG " + [stats.sf, stats.sa].join('-'),
+        "Corsi " + [stats.cf, stats.ca].join('-'),
+        "Fenwick " + [stats.ff, stats.fa].join('-'),
+        "Sh% " + [shA, shH].join('-'),
+        "Sv% " + [svA, svH].join('-'),
+        "PDO " + [pdoA, pdoH].join('-')
+      ];
+      this.client.say(target, summary.join(" | "));
+      return user.nickname + " asked for the fancy game summary for '" + data + "'.";
+    }.bind(this), function() {
+      this.client.say(target, "No game found.");
+      return user.nickname + " asked for the fancy game summary for '" + data + "', but that was not found.";
     }.bind(this));
   }
 };
