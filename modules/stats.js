@@ -518,15 +518,16 @@ module.exports = {
     }.bind(this));
   },
   "asummary": function(data, user, target) {
-    var ds = data.split(" ");
+    var ds = data.split(" "), date, page, teamAbbr;
     if(data.split(" ").length > 1) {
       // requested a date!
-      var date = ds[0], teamAbbr = ds[1].toUpperCase();
+      date = ds[0];
+      teamAbbr = ds[1].toUpperCase();
       if(!date.match(/^[\d]{8}$/)) {
         this.client.say(target, "The date specified is incorrectly formatted. Your request should look like ,asummary [YYYYMMDD] abr");
         return user.nickname + " asked for the fancy game summary for '" + data + "', but the date was badly formatted.";
       }
-      var date = moment(date, "YYYYMMDD");
+      date = moment(date, "YYYYMMDD");
     } else {
       teamAbbr = data.toUpperCase();
     }
@@ -536,7 +537,7 @@ module.exports = {
       chosenTeam = data.toLowerCase();
     }
     if(!date) {
-      var page = HTTP.read('http://www.extraskater.com/').then(function(b) {
+      page = HTTP.read('http://www.extraskater.com/').then(function(b) {
         var $ = cheerio.load(b.toString());
         var gamesToday = $('h3').filter(function() { return $(this).text().indexOf('Games for') > -1; }).next('div.row');
         var chosen = Array.prototype.filter.call(gamesToday.find('table'), function(table) {
@@ -553,15 +554,18 @@ module.exports = {
       });
     } else {
       var url = 'http://www.extraskater.com/games/all?month=' + date.format('MMM').toLowerCase() + '&season='  + date.format('YYYY');
-      var page = HTTP.read(url).then(function(b) {
+      page = HTTP.read(url).then(function(b) {
         var $ = cheerio.load(b.toString());
 
-        var label = $("#games-list li strong").filter(function() { return $(this).text() === date.format('ddd. MMM. D, 2014') });
+        var label = $("#games-list li strong").filter(function() {
+          return $(this).text() === date.format('ddd. MMM. D, 2014');
+        });
         if(label && label.parent()) {
           label = label.parent();
         }
         var games = [], curGame = label, link;
-        while(curGame = curGame.next()) {
+        while(true) {
+          curGame = curGame.next();
           if(curGame.children('strong').length) break;
           link = curGame.children('a');
           if(link.text().toLowerCase().indexOf(chosenTeam) > -1) {
@@ -574,13 +578,18 @@ module.exports = {
     return page.then(function(b) {
       var $ = cheerio.load(b.toString());
 
-      var titleParse = $('h2').text().trim().match(/^(\d{4}-\d{2}-\d{2}): (.+) (\d+) at (.+) (\d+)( - (\d+:\d+) (\d\w+))?/);
+      var titleParse = $('h2').text().trim().match(/^(\d{4}-\d{2}-\d{2}): (.+) (\d+) at (.+?) (\d+)(?: [\-\-] (\d+:\d+) (\d\w+))?/);
       var gameInfo = reverseAbbr(titleParse[2]) + " " + titleParse[3] + " " + reverseAbbr(titleParse[4]) + " " + titleParse[5] + " (";
       gameInfo += (titleParse[6]) ? titleParse[6] + " " + titleParse[7] : "FINAL";
       gameInfo += ")";
 
       var stats = {};
-      var idx = Array.prototype.map.call($('tr.team-game-stats-all').find('td a'), function(el, i){ return [$(el).text(), i] }).filter(function(pair) { return pair[0].indexOf(titleParse[2]) > -1; })[0][1];
+      var idx = Array.prototype.map.call($('tr.team-game-stats-all').find('td a'), function(el, i){
+        return [$(el).text(), i];
+      }).filter(function(pair) {
+        return pair[0].indexOf(titleParse[2]) > -1;
+      });
+      idx = idx[0][1];
       Array.prototype.forEach.call($($('tr.team-game-stats-all')[idx]).children('td.number-right'), function(td, i) {
         if(KEYS.esSummary[i]) {
           stats[KEYS.esSummary[i]] = $(td).text();
