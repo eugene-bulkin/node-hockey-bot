@@ -62,7 +62,9 @@ var Bot = function() {
   this.setupLogs().then(this.loadCommands.bind(this)).then(this.initializeDatabase.bind(this)).done(function() {
 
     this.client = new irc.Client(server.server, server.nickname, {
-      channels: server.channels
+      channels: server.channels,
+      floodProtection: true,
+      floodProtectionDelay: 750
     });
 
     // Set up client listeners

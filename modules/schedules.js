@@ -126,16 +126,14 @@ module.exports = {
         var homeTeam = teams[hash.HOME_TEAM_ID];
         var awayTeam = teams[hash.VISITOR_TEAM_ID];
         var futureTime = moment(hash.GAME_STATUS_TEXT, 'h:mm a \\E\\T', 'America/New_York', true);
-        var dateStr, tm1, tm2;
+        var dateStr, tm1 = awayTeam.TEAM_ABBREVIATION, tm2 = homeTeam.TEAM_ABBREVIATION;
         if(futureTime.isValid()) {
           dateStr = futureTime.format('h:mm A') + ' ET';
-          tm1 = awayTeam.TEAM_ABBREVIATION;
-          tm2 = homeTeam.TEAM_ABBREVIATION;
         } else {
           dateStr = hash.GAME_STATUS_TEXT;
           var s1 = awayTeam.PTS, s2 = homeTeam.PTS;
-          tm1 = awayTeam.TEAM_ABBREVIATION + ' ' + s1;
-          tm2 = homeTeam.TEAM_ABBREVIATION + ' ' + s2;
+          tm1 += ' ' + s1;
+          tm2 += ' ' + s2;
           if(s1 < s2) {
             tm2 = bold(tm2);
           } else if(s1 > s2) {
@@ -149,4 +147,67 @@ module.exports = {
       return user.nickname + ' asked for the NBA schedule.';
     }.bind(this));
   },
+  "mlb": function(data, user, target) {
+    var date;
+    var ds = data.split(' ');
+    var showAll = ds[0] === '*';
+    var data_date = ds.pop();
+    if (data_date === 'tomorrow') {
+      date = moment().tz('America/New_York').add(moment.duration(1, 'day'));
+    } else if(data_date.match(/^[\d]{8}$/)) {
+      date = moment(data_date, 'YYYYMMDD', 'America/New_York');
+    } else {
+      date = moment().tz('America/New_York');
+    }
+    var year = date.format('YYYY'), month = date.format('MM'), day = date.format('DD');
+    var url = 'http://gd2.mlb.com/components/game/mlb/year_' + year + '/month_' + month + '/day_' + day + '/master_scoreboard.json';
+    HTTP.read(url).then(function(b) {
+      var json = JSON.parse(b.toString('utf8'));
+      var games = json.data.games;
+      return games.game.map(function(g) {
+        var tm1 = g.away_name_abbrev;
+        var tm2 = g.home_name_abbrev;
+        var inning, s1, s2;
+        switch(g.status.status.toLowerCase()) {
+          case 'final':
+            if(!showAll) {
+              return;
+            }
+            inning = "Final";
+            s1 = int(g.linescore.r.away);
+            s2 = int(g.linescore.r.home);
+            tm1 += ' ' + s1;
+            tm2 += ' ' + s2;
+            if(s1 < s2) {
+              tm2 = bold(tm2);
+            } else if(s1 > s2) {
+              tm1 = bold(tm1);
+            }
+            break;
+          case 'in progress':
+            inning = g.status.inning_state + " " + humanize.ordinal(g.status.inning);
+            s1 = int(g.linescore.r.away);
+            s2 = int(g.linescore.r.home);
+            tm1 += ' ' + s1;
+            tm2 += ' ' + s2;
+            if(s1 < s2) {
+              tm2 = bold(tm2);
+            } else if(s1 > s2) {
+              tm1 = bold(tm1);
+            }
+            break;
+          default:
+            if(!showAll) {
+              return;
+            }
+            inning = [g.time, g.ampm, g.time_zone].join(' ');
+            break;
+        }
+        return tm1 + ' @ ' + tm2 + " (" + inning + ")";
+      }).join("\n");
+    }).then(function(sched) {
+      this.client.say(target, sched);
+      return user.nickname + ' asked for the MLB schedule.';
+    }.bind(this)).done();
+  }
 };
