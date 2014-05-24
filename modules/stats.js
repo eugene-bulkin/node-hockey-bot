@@ -315,38 +315,7 @@ var formatDraft = function(draft) {
   return 'Drafted ' + draft.year + ' by the ' + draft.team + ', ' + humanize.ordinal(draft.round) + ' round (' + humanize.ordinal(draft.overall) + ' pick)';
 };
 
-var abbrHash = {
-  "ANA":"Ducks",
-  "SJS":"Sharks",
-  "LAK":"Kings",
-  "PHX":"Coyotes",
-  "VAN":"Canucks",
-  "CGY":"Flames",
-  "EDM":"Oilers",
-  "COL":"Avalanche",
-  "STL":"Blues",
-  "CHI":"Blackhawks",
-  "MIN":"Wild",
-  "DAL":"Stars",
-  "NSH":"Predators",
-  "WPG":"Jets",
-  "BOS":"Bruins",
-  "TBL":"Lightning",
-  "MTL":"Canadiens",
-  "DET":"Red Wings",
-  "OTT":"Senators",
-  "TOR":"Maple Leafs",
-  "FLA":"Panthers",
-  "BUF":"Sabres",
-  "PIT":"Penguins",
-  "NYR":"Rangers",
-  "PHI":"Flyers",
-  "CBJ":"Blue Jackets",
-  "WSH":"Capitals",
-  "NJD":"Devils",
-  "CAR":"Hurricanes",
-  "NYI":"Islanders"
-};
+var abbrHash = require('./abbrHash.json');
 
 var reverseAbbr = function(teamName) {
   return Object.keys(abbrHash).filter(function(key) {
