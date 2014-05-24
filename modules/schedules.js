@@ -19,6 +19,14 @@ var toAbbr = function(team) {
   })[0];
 };
 
+var zipHash = function(keys, values) {
+  var obj = {};
+  keys.forEach(function(key, i) {
+    obj[key] = values[i];
+  });
+  return obj;
+};
+
 module.exports = {
   "mls": function(data, user, target) {
     var date, ds = data ? data.split(" ") : [];
@@ -92,5 +100,53 @@ module.exports = {
       this.client.say(target, sched);
       return user.nickname + ' asked for the NHL schedule.';
     }.bind(this));
-  }
+  },
+  "nba": function(data, user, target) {
+    var date;
+    if (data === 'tomorrow') {
+      date = moment().tz('America/New_York').add(moment.duration(1, 'day'));
+    } else if(data.match(/^[\d]{8}$/)) {
+      date = moment(data, 'YYYYMMDD', 'America/New_York');
+    } else {
+      date = moment().tz('America/New_York');
+    }
+    HTTP.read('http://stats.nba.com/stats/scoreboard/?LeagueID=00&DayOffset=0&gameDate=' + date.format('MM/DD/YYYY')).then(function(b) {
+      var json = JSON.parse(b.toString('utf8'));
+      // construct team id hash
+      var teams = {};
+      var lines = json.resultSets[1];
+      lines.rowSet.forEach(function(row) {
+        var hash = zipHash(lines.headers, row);
+        teams[hash.TEAM_ID] = hash;
+      });
+      // actually load games
+      var games = json.resultSets[0];
+      return games.rowSet.map(function(row) {
+        var hash = zipHash(games.headers, row);
+        var homeTeam = teams[hash.HOME_TEAM_ID];
+        var awayTeam = teams[hash.VISITOR_TEAM_ID];
+        var futureTime = moment(hash.GAME_STATUS_TEXT, 'h:mm a \\E\\T', 'America/New_York', true);
+        var dateStr, tm1, tm2;
+        if(futureTime.isValid()) {
+          dateStr = futureTime.format('h:mm A') + ' ET';
+          tm1 = awayTeam.TEAM_ABBREVIATION;
+          tm2 = homeTeam.TEAM_ABBREVIATION;
+        } else {
+          dateStr = hash.GAME_STATUS_TEXT;
+          var s1 = awayTeam.PTS, s2 = homeTeam.PTS;
+          tm1 = awayTeam.TEAM_ABBREVIATION + ' ' + s1;
+          tm2 = homeTeam.TEAM_ABBREVIATION + ' ' + s2;
+          if(s1 < s2) {
+            tm2 = bold(tm2);
+          } else if(s1 > s2) {
+            tm1 = bold(tm1);
+          }
+        }
+        return tm1 + " @ " + tm2 + ' (' + dateStr + ') [' + hash.NATL_TV_BROADCASTER_ABBREVIATION + ']';
+      }).join("\n");
+    }).then(function(sched) {
+      this.client.say(target, sched);
+      return user.nickname + ' asked for the NBA schedule.';
+    }.bind(this));
+  },
 };
