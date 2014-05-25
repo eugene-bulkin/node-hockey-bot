@@ -45,7 +45,8 @@ module.exports = {
       }
       return Array.prototype.map.call(rows, function(row) {
         var dateStr = $(row.children[0]).text().trim();
-        if(!dateStr.match(/(FT|HT)/)) {
+        console.log(dateStr, dateStr.match(/(FT|HT|[\d]+')/));
+        if(!dateStr.match(/(FT|HT|[\d]+')/)) {
           if(dateStr.split(', ').length === 1) {
             dateStr = moment().format('MMMM D') + ', ' + dateStr;
           }
