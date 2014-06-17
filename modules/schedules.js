@@ -107,7 +107,7 @@ module.exports = {
   "nba": function(data, user, target) {
     var date = getDate(data);
     var showAll = data.split(' ')[0] === '*';
-    HTTP.read('http://stats.nba.com/stats/scoreboard/?LeagueID=00&DayOffset=0&gameDate=' + date.format('MM/DD/YYYY')).then(function(b) {
+    HTTP.read('http://stats.nba.com/stats/scoreboard/?LeagueID=00&DayOffset=0&gameDate=' + date.format('MM/DD/YYYY') + '&' + new Date().getTime()).then(function(b) {
       var json = JSON.parse(b.toString('utf8'));
       // construct team id hash
       var teams = {};
@@ -118,16 +118,26 @@ module.exports = {
       });
       // actually load games
       var games = json.resultSets[0];
+      if(games.rowSet.length === 0) {
+        return 'No games found.';
+      }
       return games.rowSet.map(function(row) {
         var hash = zipHash(games.headers, row);
         var homeTeam = teams[hash.HOME_TEAM_ID];
         var awayTeam = teams[hash.VISITOR_TEAM_ID];
         var futureTime = moment(hash.GAME_STATUS_TEXT, 'h:mm a \\E\\T', 'America/New_York', true);
         var dateStr, tm1 = awayTeam.TEAM_ABBREVIATION, tm2 = homeTeam.TEAM_ABBREVIATION;
+        var qtrMatch = hash.GAME_STATUS_TEXT.match(/(Start|End) of (.+) Qtr/i);
         if(futureTime.isValid()) {
           dateStr = futureTime.format('h:mm A') + ' ET';
         } else {
-          dateStr = hash.GAME_STATUS_TEXT;
+          if(['final', 'halftime'].indexOf(hash.GAME_STATUS_TEXT.toLowerCase()) > -1) {
+            dateStr = hash.GAME_STATUS_TEXT;
+          } else if(qtrMatch) {
+            dateStr = qtrMatch[0] + ' ' + qtrMatch[1];
+          } else {
+            dateStr = hash.LIVE_PC_TIME + ' ' + hash.GAME_STATUS_TEXT.split(' ')[0];
+          }
           var s1 = awayTeam.PTS, s2 = homeTeam.PTS;
           tm1 += ' ' + s1;
           tm2 += ' ' + s2;
