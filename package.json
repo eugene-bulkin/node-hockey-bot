@@ -17,7 +17,8 @@
     "sqlite3": "2.x.x",
     "q-sqlite3": ">=0.0.2",
     "cheerio": "^0.16.0",
-    "humanize": ">=0.0.9"
+    "humanize": ">=0.0.9",
+    "fuzzy": "~0.1.0"
   },
   "license": "Apache v2"
 }

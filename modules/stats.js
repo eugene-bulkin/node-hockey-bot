@@ -4,7 +4,8 @@ var HTTP = require('q-io/http');
 var QSQL = require('q-sqlite3');
 var cheerio = require('cheerio');
 var humanize = require('humanize');
-var moment = require('moment');
+var moment = require('moment-timezone');
+var fuzzy = require('fuzzy');
 
 var getFullPlayerName = function(data) {
   var oneName = data.length === 1 && data[0].toLowerCase();
@@ -107,11 +108,24 @@ var getPlayerIds = function(name) {
     throw e;
     }
   });
-  return Q.all([yahoo, extraSkater, capGeek]).spread(function(y, es, cg) {
+  var lastfirst = name.split(' ').reverse().join(', ');
+  var rotoworld = HTTP.read('http://www.rotoworld.com/content/playersearch.aspx?searchname=' + lastfirst.replace(' ', '+') + '&sport=nhl').then(function(b) {
+    // didn't redirect, so guy doesn't exist!
+    return null;
+  }, function(e) {
+    if(e.response.status === 302) {
+      return e.response.headers.location.replace('/player/nhl/', '');
+    } else {
+    // if it was some other error, throw an error to be dealt with down the line.
+    throw e;
+    }
+  });
+  return Q.all([yahoo, extraSkater, capGeek, rotoworld]).spread(function(y, es, cg, roto) {
     return JSON.stringify({
       yahoo: y,
       extraSkater: es,
-      capGeek: cg
+      capGeek: cg,
+      rotoworld: roto
     });
   });
 };
@@ -139,6 +153,28 @@ var KEYS = {
   yahooG: ["gp", "gs", "min", "w", "l", "otl", "ega", "ga", "gaa", "sa", "sv", null, "so"],
   es: ["gp", "toi", null, null, "gfp", "gfp_rel", null, null, "cfp", "cfp_rel", null, null, "ffp", "ffp_rel", null, null, "sfp", "sfp_rel", "shp", "svp", "pdo"],
   esSummary: ["toi", "gf", "ga", "cf", "ca", null, "ff", "fa", null, "sf", "sa", null, null, null]
+};
+
+var getRotoworldNews = function(db, pid, ids) {
+  return HTTP.read('http://www.rotoworld.com/recent/nhl/' + ids.rotoworld).then(function(b) {
+    var $ = cheerio.load(b.toString());
+    var stories = Array.prototype.slice.call($('.RW_playernews .pb'), 0, 3);
+    return stories.map(function(story) {
+      var $story = $(story);
+      var dateStr = $story.find('.date').text().trim();
+      var date = moment(dateStr, 'ddd, MMM D, YYYY hh:mm:ss A');
+      if(!date.isValid()) {
+        date = moment(dateStr, 'MMM D h:mm A');
+      }
+      return {
+        date: date,
+        story: $story.find('.report').text().trim(),
+        source: $story.find('.source a').text().trim()
+      };
+    });
+  }, function(e) {
+    throw new Error('notfound');
+  });
 };
 
 var getCapInfo = function(db, pid, ids) {
@@ -323,9 +359,64 @@ var reverseAbbr = function(teamName) {
   })[0];
 };
 
+var bold = function(str) {
+  return '\u0002' + str + '\u000F';
+};
+
 var int = function(num) { return parseInt(num, 10); };
 
+var objToQuery = function(o) {
+  var s = [];
+  Object.keys(o).forEach(function(k) {
+    s.push(k + "=" + o[k]);
+  });
+  return s.join("&");
+};
+
+var zipHash = function(keys, values) {
+  var obj = {};
+  keys.forEach(function(key, i) {
+    obj[key] = values[i];
+  });
+  return obj;
+};
+
+var getDate = function(data) {
+  var ds = data.split(' ');
+  var data_date = ds[0];
+  if (data_date === 'tomorrow') {
+    date = moment().tz('America/New_York').add(moment.duration(1, 'day'));
+  } else if(data_date.match(/^[\d]{8}$/)) {
+    date = moment(data_date, 'YYYYMMDD', 'America/New_York');
+  } else {
+    date = moment().tz('America/New_York');
+  }
+  return date;
+};
+
 module.exports = {
+  "nhlnews": function(data, user, target) {
+    var searchQuery = data.toLowerCase();
+    var db = this.db;
+    return getPlayerData(db, searchQuery).then(function(data) {
+      return getRotoworldNews(db, data.pid, data.data);
+    }).then(function(stories) {
+      var result = stories.map(function(story) {
+        var str = bold('[' + story.date.format("MMMM D, YYYY") + ']') + ' ' + story.story;
+        if(story.source) {
+          str += ' (via ' + story.source + ')';
+        }
+        return str;
+      });
+      this.client.say(target, result.join("\n"));
+    }.bind(this), function(e) {
+      if(e.message === 'notfound') {
+        this.client.say(target, 'Player news not found.');
+      } else {
+        throw e;
+      }
+    }.bind(this));
+  },
   "cap": function(data, user, target) {
     var searchQuery = data.toLowerCase();
     var db = this.db;
@@ -486,6 +577,96 @@ module.exports = {
       }
     }.bind(this));
   },
+  "summary": function(data, user, target) {
+    var ds = data.split(" "), date = getDate(data), page, teamAbbr;
+    if(data.split(" ").length > 1) {
+      teamAbbr = ds[1].toUpperCase();
+    } else {
+      teamAbbr = data.toUpperCase();
+    }
+    HTTP.read('http://www.nhl.com/ice/ajax/GCScoreboardJS?today=' + date.format('MM/DD/YYYY')).then(function(b) {
+      var json = JSON.parse(b.toString('utf8').trim().match(/^loadScoreboard\((.+?)\)$/)[1]);
+      var chosenGame = json.games.filter(function(game) {
+        return game.ata === teamAbbr || game.hta === teamAbbr;
+      }).shift();
+      if(!chosenGame) {
+        throw new Error('notfound');
+      } else {
+        var seasonYear = +chosenGame.id.toString().slice(0,4);
+        var season = seasonYear + '' + (seasonYear + 1);
+        return HTTP.read('http://live.nhl.com/GameData/' + season + '/' + chosenGame.id + '/PlayByPlay.json').then(function(b) {
+          return [chosenGame, JSON.parse(b.toString('utf8').trim())];
+        });
+      }
+    }).spread(function(game, playbyplay) {
+      var plays = playbyplay.data.game.plays.play;
+      var hits = [0, 0];
+      plays.filter(function(play) {
+        return play.type === 'Hit';
+      }).forEach(function(hit) {
+        var isHome = hit.hoi.indexOf(hit.pid1) > -1;
+        if(isHome) {
+          hits[1]++;
+        } else {
+          hits[0]++;
+        }
+      });
+      var goals = plays.filter(function(play) {
+        return play.type === 'Goal';
+      }).map(function(goal) {
+        var assists = [], ps, pts;
+        var isHome = goal.hoi.indexOf(goal.pid1) > -1;
+        var team = (isHome) ? game.hta : game.ata;
+        var numH = goal.hoi.length, numA = goal.aoi.length;
+        var special = '', homePP = numH > numA && numH < 7, awayPP = numH < numA && numA < 7;
+        if(numH !== numA) {
+          if(homePP) {
+            special = (isHome) ? ' PP' : ' SH';
+          } else if(awayPP) {
+            special = (isHome) ? ' SH' : ' PP';
+          }
+        }
+        ps = goal.p1name.split(" ");
+        pts = goal.desc.match(new RegExp(goal.p1name + " \\((\\d+)\\)"))[1];
+        var s = bold(team + " " + ps[0][0] + ". " + ps.slice(1).join(" ") + ' (' + pts + ')' + special);
+        if(goal.p2name) {
+          ps = goal.p2name.split(" ");
+          pts = goal.desc.match(new RegExp(goal.p2name + " \\((\\d+)\\)"))[1];
+          assists.push(ps[0][0] + ". " + ps.slice(1).join(" "));
+        }
+        if(goal.p3name) {
+          ps = goal.p3name.split(" ");
+          pts = goal.desc.match(new RegExp(goal.p3name + " \\((\\d+)\\)"))[1];
+          assists.push(ps[0][0] + ". " + ps.slice(1).join(" "));
+        }
+        if(assists.length > 0) {
+          s += " (" + assists.join(", ") + ")";
+        }
+        return s;
+      });
+      var s1 = game.ats, s2 = game.hts;
+      var tm1 = game.ata + ' ' + s1;
+      var tm2 = game.hta + ' ' + s2;
+      if(s1 < s2) {
+        tm2 = bold(tm2);
+      } else if(s1 > s2) {
+        tm1 = bold(tm1);
+      }
+      var line = [
+        tm1 + " " + tm2 + " (" + game.bs + ")",
+        "SOG " + game.atsog + "-" + game.htsog,
+        "Hits " + hits.join('-'),
+        "Goals: " + goals.join(", ")
+      ];
+      this.client.say(target, line.join(" | "));
+    }.bind(this)).fail(function(e) {
+      if(e.message === 'notfound') {
+        this.client.say(target, "No game found.");
+        return user.nickname + " asked for the game summary for '" + data + "', but that was not found.";
+      }
+       else { console.log(e); }
+    }.bind(this));
+  },
   "asummary": function(data, user, target) {
     var ds = data.split(" "), date, page, teamAbbr;
     if(data.split(" ").length > 1) {
@@ -515,7 +696,7 @@ module.exports = {
           return teams.indexOf(chosenTeam) > -1;
         })[0];
         if(chosen) {
-          var uri = 'http://www.extraskater.com' + $(chosen).attr('onclick').replace("location.href='",'').replace("'",'');
+          var uri = 'http://www.extraskater.com' + $(chosen).attr('onclick').replace("location.href='",'').replace("'",'') + "?" + new Date().getTime();
           return HTTP.read(uri);
         } else {
           throw new Error();
@@ -538,7 +719,7 @@ module.exports = {
           if(curGame.children('strong').length) break;
           link = curGame.children('a');
           if(link.text().toLowerCase().indexOf(chosenTeam) > -1) {
-            return HTTP.read('http://www.extraskater.com' + link.attr('href'));
+            return HTTP.read('http://www.extraskater.com' + link.attr('href') + "?" + new Date().getTime());
           }
         }
         throw new Error('no game found');
@@ -548,7 +729,14 @@ module.exports = {
       var $ = cheerio.load(b.toString());
 
       var titleParse = $('h2').text().trim().match(/^(\d{4}-\d{2}-\d{2}): (.+) (\d+) at (.+?) (\d+)(?: [\-\-] (\d+:\d+) (\d\w+))?/);
-      var gameInfo = reverseAbbr(titleParse[2]) + " " + titleParse[3] + " " + reverseAbbr(titleParse[4]) + " " + titleParse[5] + " (";
+      var s1 = titleParse[3], s2 = titleParse[5];
+      var t1 = reverseAbbr(titleParse[2]) + " " + titleParse[3], t2 = reverseAbbr(titleParse[4]) + " " + titleParse[5];
+      if(s1 > s2) {
+        t1 = bold(t1);
+      } else if(s1 < s2) {
+        t2 = bold(t2);
+      }
+      var gameInfo = t1 + " " + t2 + " (";
       gameInfo += (titleParse[6]) ? titleParse[6] + " " + titleParse[7] : "FINAL";
       gameInfo += ")";
 
@@ -587,6 +775,267 @@ module.exports = {
       this.client.say(target, "No game found.");
       return user.nickname + " asked for the fancy game summary for '" + data + "', but that was not found.";
     }.bind(this));
+  },
+  "nstats": function(data, user, target) {
+    var season = (new Date().getFullYear() - 1) + "-" + (new Date().getYear() % 100);
+    return HTTP.read('http://stats.nba.com/stats/commonallplayers/?LeagueID=00&Season=' + season + '&IsOnlyCurrentSeason=1').then(function(b) {
+      return JSON.parse(b.toString()).resultSets[0].rowSet;
+    }).then(function(players) {
+      var match = players.filter(function(player) {
+        var ns = player[1].split(", ");
+        var name = ns[1] + " " + ns[0];
+        return fuzzy.test(data, name);
+      }).sort(function(a,b) {
+        return a[3] - b[3];
+      }).shift();
+      if(!match) {
+        throw new Error('notfound');
+      } else {
+        return match[0];
+      }
+    }).then(function(playerId) {
+      var statsQueryData = {
+        "Season": season,
+        "SeasonType": "Regular+Season",
+        "LeagueID": "00",
+        "PlayerID": playerId,
+        "MeasureType": "Base",
+        "PerMode": "PerGame",
+        "PlusMinus": "N",
+        "PaceAdjust": "N",
+        "Rank": "N",
+        "Outcome": "",
+        "Location": "",
+        "Month": "0",
+        "SeasonSegment": "",
+        "DateFrom": "",
+        "DateTo": "",
+        "OpponentTeamID": "0",
+        "VsConference": "",
+        "VsDivision": "",
+        "GameSegment": "",
+        "Period": "0",
+        "LastNGames": "0"
+      }, profileQueryData = {
+        "asynchFlag": "true",
+        "SeasonType": "Regular+Season",
+        "LeagueID": "00",
+        "PlayerID": playerId
+      };
+      return Q.all([
+        HTTP.read('http://stats.nba.com/stats/playerdashboardbygeneralsplits?' + objToQuery(statsQueryData)).then(function(b) { return JSON.parse(b.toString()); }),
+        HTTP.read('http://stats.nba.com/stats/commonplayerinfo/?' + objToQuery(profileQueryData)).then(function(b) { return JSON.parse(b.toString()); })
+      ]);
+    }).spread(function(stats, profile) {
+      var seasonStats = zipHash(stats.resultSets[0].headers, stats.resultSets[0].rowSet[0]);
+      var about = zipHash(profile.resultSets[0].headers, profile.resultSets[0].rowSet[0]);
+      console.log(seasonStats);
+      var positions = about.POSITION.split("-").map(function(p) { return p[0]; }).join("/");
+      var firstLine = [
+        about.DISPLAY_FIRST_LAST,
+        about.TEAM_CITY + " " + positions + " #" + about.JERSEY,
+        "Out of " + about.SCHOOL,
+        "Born " + moment(about.BIRTHDATE).format("MMMM DD, YYYY")
+      ];
+      var secondLine = [
+        season,
+        about.TEAM_ABBREVIATION,
+        "GP " + seasonStats.GP,
+        "MIN " + seasonStats.MIN,
+        "FG% " + Math.round(100 * seasonStats.FG_PCT) + "%",
+        "3P% " + Math.round(100 * seasonStats.FG3_PCT) + "%",
+        "FT% " + Math.round(100 * seasonStats.FT_PCT) + "%",
+        "PTS " + seasonStats.PTS,
+        "AST " + seasonStats.AST,
+        "REB " + seasonStats.REB,
+        "STL " + seasonStats.STL,
+        "BLK " + seasonStats.BLK,
+        "TO " + seasonStats.TOV,
+        "PF " + seasonStats.PF,
+        "+/- " + seasonStats.PLUS_MINUS
+      ];
+      this.client.say(target, firstLine.join(" | ") + "\n" + secondLine.join(" | "));
+      return user.nickname + ' searched for NBA player "' + data + '"';
+    }.bind(this)).fail(function(e) {
+      if(e.message === 'notfound') {
+        this.client.say(target, 'No player found.');
+        return user.nickname + ' searched for NBA player "' + data + '" but no results were found.';
+      } else {
+        console.log(e);
+      }
+    });
+  },
+  "anstats": function(data, user, target) {
+    var season = (new Date().getFullYear() - 1) + "-" + (new Date().getYear() % 100);
+    return HTTP.read('http://stats.nba.com/stats/commonallplayers/?LeagueID=00&Season=' + season + '&IsOnlyCurrentSeason=1').then(function(b) {
+      return JSON.parse(b.toString()).resultSets[0].rowSet;
+    }).then(function(players) {
+      var match = players.filter(function(player) {
+        var ns = player[1].split(", ");
+        var name = ns[1] + " " + ns[0];
+        return fuzzy.test(data, name);
+      }).sort(function(a,b) {
+        return a[3] - b[3];
+      }).shift();
+      if(!match) {
+        throw new Error('notfound');
+      } else {
+        return match[0];
+      }
+    }).then(function(playerId) {
+      var statsQueryData = {
+        "Season": season,
+        "SeasonType": "Regular+Season",
+        "LeagueID": "00",
+        "PlayerID": playerId,
+        "MeasureType": "Advanced",
+        "PerMode": "PerGame",
+        "PlusMinus": "N",
+        "PaceAdjust": "N",
+        "Rank": "N",
+        "Outcome": "",
+        "Location": "",
+        "Month": "0",
+        "SeasonSegment": "",
+        "DateFrom": "",
+        "DateTo": "",
+        "OpponentTeamID": "0",
+        "VsConference": "",
+        "VsDivision": "",
+        "GameSegment": "",
+        "Period": "0",
+        "LastNGames": "0"
+      }, profileQueryData = {
+        "asynchFlag": "true",
+        "SeasonType": "Regular+Season",
+        "LeagueID": "00",
+        "PlayerID": playerId
+      };
+      return Q.all([
+        HTTP.read('http://stats.nba.com/stats/playerdashboardbygeneralsplits?' + objToQuery(statsQueryData)).then(function(b) { return JSON.parse(b.toString()); }),
+        HTTP.read('http://stats.nba.com/stats/commonplayerinfo/?' + objToQuery(profileQueryData)).then(function(b) { return JSON.parse(b.toString()); })
+      ]);
+    }).spread(function(stats, profile) {
+      var seasonStats = zipHash(stats.resultSets[0].headers, stats.resultSets[0].rowSet[0]);
+      var about = zipHash(profile.resultSets[0].headers, profile.resultSets[0].rowSet[0]);
+      var positions = about.POSITION.split("-").map(function(p) { return p[0]; }).join("/");
+      var firstLine = [
+        about.DISPLAY_FIRST_LAST,
+        about.TEAM_CITY + " " + positions + " #" + about.JERSEY,
+        "Out of " + about.SCHOOL,
+        "Born " + moment(about.BIRTHDATE).format("MMMM DD, YYYY")
+      ];
+      var secondLine = [
+        season,
+        about.TEAM_ABBREVIATION,
+        "GP " + seasonStats.GP,
+        "MIN " + seasonStats.MIN,
+        "TS% " + Math.round(100 * seasonStats.TS_PCT) + "%",
+        "eFG% " + Math.round(100 * seasonStats.EFG_PCT) + "%",
+        "USG% " + Math.round(100 * seasonStats.USG_PCT) + "%",
+        "ORtg " + seasonStats.OFF_RATING,
+        "DRtg " + seasonStats.DEF_RATING,
+        "AST% " + Math.round(100 * seasonStats.AST_PCT) + "%",
+        "REB% " + Math.round(100 * seasonStats.REB_PCT) + "%",
+        "AST/TO " + seasonStats.AST_TO
+      ];
+      this.client.say(target, firstLine.join(" | ") + "\n" + secondLine.join(" | "));
+      return user.nickname + ' searched for NBA player "' + data + '"';
+    }.bind(this)).fail(function(e) {
+      if(e.message === 'notfound') {
+        this.client.say(target, 'No player found.');
+        return user.nickname + ' searched for NBA player "' + data + '" but no results were found.';
+      }
+    });
+  },
+  "npstats": function(data, user, target) {
+    var season = (new Date().getFullYear() - 1) + "-" + (new Date().getYear() % 100);
+    return HTTP.read('http://stats.nba.com/stats/commonallplayers/?LeagueID=00&Season=' + season + '&IsOnlyCurrentSeason=1').then(function(b) {
+      return JSON.parse(b.toString()).resultSets[0].rowSet;
+    }).then(function(players) {
+      var match = players.filter(function(player) {
+        var ns = player[1].split(", ");
+        var name = ns[1] + " " + ns[0];
+        return fuzzy.test(data, name);
+      }).sort(function(a,b) {
+        return a[3] - b[3];
+      }).shift();
+      if(!match) {
+        throw new Error('notfound');
+      } else {
+        return match[0];
+      }
+    }).then(function(playerId) {
+      var statsQueryData = {
+        "Season": season,
+        "SeasonType": "Playoffs",
+        "LeagueID": "00",
+        "PlayerID": playerId,
+        "MeasureType": "Base",
+        "PerMode": "PerGame",
+        "PlusMinus": "N",
+        "PaceAdjust": "N",
+        "Rank": "N",
+        "Outcome": "",
+        "Location": "",
+        "Month": "0",
+        "SeasonSegment": "",
+        "DateFrom": "",
+        "DateTo": "",
+        "OpponentTeamID": "0",
+        "VsConference": "",
+        "VsDivision": "",
+        "GameSegment": "",
+        "Period": "0",
+        "LastNGames": "0"
+      }, profileQueryData = {
+        "asynchFlag": "true",
+        "SeasonType": "Regular+Season",
+        "LeagueID": "00",
+        "PlayerID": playerId
+      };
+      return Q.all([
+        HTTP.read('http://stats.nba.com/stats/playerdashboardbygeneralsplits?' + objToQuery(statsQueryData)).then(function(b) { return JSON.parse(b.toString()); }),
+        HTTP.read('http://stats.nba.com/stats/commonplayerinfo/?' + objToQuery(profileQueryData)).then(function(b) { return JSON.parse(b.toString()); })
+      ]);
+    }).spread(function(stats, profile) {
+      var seasonStats = zipHash(stats.resultSets[0].headers, stats.resultSets[0].rowSet[0]);
+      var about = zipHash(profile.resultSets[0].headers, profile.resultSets[0].rowSet[0]);
+      console.log(seasonStats);
+      var positions = about.POSITION.split("-").map(function(p) { return p[0]; }).join("/");
+      var firstLine = [
+        about.DISPLAY_FIRST_LAST,
+        about.TEAM_CITY + " " + positions + " #" + about.JERSEY,
+        "Out of " + about.SCHOOL,
+        "Born " + moment(about.BIRTHDATE).format("MMMM DD, YYYY")
+      ];
+      var secondLine = [
+        season,
+        about.TEAM_ABBREVIATION,
+        "GP " + seasonStats.GP,
+        "MIN " + seasonStats.MIN,
+        "FG% " + Math.round(100 * seasonStats.FG_PCT) + "%",
+        "3P% " + Math.round(100 * seasonStats.FG3_PCT) + "%",
+        "FT% " + Math.round(100 * seasonStats.FT_PCT) + "%",
+        "PTS " + seasonStats.PTS,
+        "AST " + seasonStats.AST,
+        "REB " + seasonStats.REB,
+        "STL " + seasonStats.STL,
+        "BLK " + seasonStats.BLK,
+        "TO " + seasonStats.TOV,
+        "PF " + seasonStats.PF,
+        "+/- " + seasonStats.PLUS_MINUS
+      ];
+      this.client.say(target, firstLine.join(" | ") + "\n" + secondLine.join(" | "));
+      return user.nickname + ' searched for NBA player "' + data + '"';
+    }.bind(this)).fail(function(e) {
+      if(e.message === 'notfound') {
+        this.client.say(target, 'No player found.');
+        return user.nickname + ' searched for NBA player "' + data + '" but no results were found.';
+      } else {
+        console.log(e);
+      }
+    });
   },
   "_help": {
     "cap": "Display cap information about a player. Usage: cap player_name",
