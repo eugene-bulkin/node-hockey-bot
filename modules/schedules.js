@@ -31,6 +31,90 @@ var getDate = function(data) {
   return date;
 };
 
+var getNFLWeek = function(data) {
+  var ds = data.split(' ');
+  var numRegex = /^\d+$/, seasonRegex = /^(pre|reg)$/i;
+  var weekNums = ds.filter(function(d) {
+    return numRegex.test(d);
+  });
+  var seasonTypes = ds.filter(function(d) {
+    return seasonRegex.test(d);
+  });
+  var week = (weekNums.length > 0) ? int(weekNums.pop()) : 1;
+  var season = (seasonTypes.length > 0) ? seasonTypes.pop().toUpperCase() : 'PRE';
+  return 'week=' + week + '&seasonType=' + season;
+};
+
+var removeEmpty = function(e) { return e && e !== ''; };
+
+var baseballMap = function(showAll) {
+  return function(g) {
+    var tm1 = g.away_name_abbrev;
+    var tm2 = g.home_name_abbrev;
+    var inning, s1, s2;
+    switch(g.status.status.toLowerCase()) {
+      case 'final':
+        if(!showAll) {
+          return;
+        }
+        inning = "Final";
+        s1 = int(g.linescore.r.away);
+        s2 = int(g.linescore.r.home);
+        tm1 += ' ' + s1;
+        tm2 += ' ' + s2;
+        if(s1 < s2) {
+          tm2 = bold(tm2);
+        } else if(s1 > s2) {
+          tm1 = bold(tm1);
+        }
+        break;
+      case 'in progress':
+        inning = g.status.inning_state + " " + humanize.ordinal(g.status.inning);
+        s1 = int(g.linescore.r.away);
+        s2 = int(g.linescore.r.home);
+        tm1 += ' ' + s1;
+        tm2 += ' ' + s2;
+        if(s1 < s2) {
+          tm2 = bold(tm2);
+        } else if(s1 > s2) {
+          tm1 = bold(tm1);
+        }
+        break;
+      default:
+        if(!showAll) {
+          return;
+        }
+        inning = [g.time, g.ampm, g.time_zone].join(' ');
+        break;
+    }
+    return tm1 + ' @ ' + tm2 + " (" + inning + ")";
+  };
+};
+
+var nflMap = function(game) {
+  var data = game.attribs;
+  var date = moment(data.eid.slice(0,-2) + ' ' + data.t + ' PM','YYYYMMDD h:mm A', 'America/New_York');
+  var tm1 = data.v;
+  var tm2 = data.h;
+  var s1 = int(data.vs), s2 = int(data.hs);
+  var dateStr = date.format('ddd hh:mm A');
+  if(data.q !== 'P') {
+    tm1 += ' ' + s1;
+    tm2 += ' ' + s2;
+    if(s1 < s2) {
+      tm2 = bold(tm2);
+    } else if(s1 > s2) {
+      tm1 = bold(tm1);
+    }
+    if(data.q === 'F') {
+      dateStr = 'Final';
+    } else {
+      dateStr = humanize.ordinal(int(data.q));
+    }
+  }
+  return tm1 + " @ " + tm2 + " (" + dateStr + ")";
+};
+
 module.exports = {
   "mls": function(data, user, target) {
     var date = getDate(data);
@@ -154,58 +238,125 @@ module.exports = {
       return user.nickname + ' asked for the NBA schedule.';
     }.bind(this));
   },
+  "afl": function(data, user, target) {
+    var url = "http://afl.com.au/api/cfs/afl/WMCTok";
+    this.aflToken = "a85d68983510b6fefb856e2c6b9bcd74";
+    return HTTP.read({
+      url: url,
+      method: "POST"
+    }).then(function(b) {
+      var json = JSON.parse(b.toString('utf8'));
+      this.aflToken = json.token;
+      return HTTP.read({
+        url: "http://www.afl.com.au/api/cfs/afl/matchItems",
+        headers: {
+          "X-media-mis-token": json.token,
+        "X-Requested-With":"XMLHttpRequest"
+        }
+      });
+    }.bind(this), function(e) {
+      if(!this.aflToken) {
+        throw e;
+      }
+      return HTTP.read({
+        url: "http://www.afl.com.au/api/cfs/afl/matchItems",
+        headers: {
+          "X-media-mis-token": this.aflToken,
+          "X-Requested-With":"XMLHttpRequest"
+        }
+      });
+    }.bind(this)).then(function(b) {
+      var json = JSON.parse(b.toString('utf8'));
+      return json.items.map(function(item) {
+        var match = item.match, score = item.score;
+        var tm1 = match.homeTeam.abbr;
+        var tm2 = match.awayTeam.abbr;
+        var date = moment(match.date).tz("America/New_York");
+        var time = "";
+        switch(match.status.toLowerCase()) {
+          case "concluded":
+            var total1 = score.homeTeamScore.matchScore.totalScore;
+            var total2 = score.awayTeamScore.matchScore.totalScore;
+            var s1 = [score.homeTeamScore.matchScore.goals,score.homeTeamScore.matchScore.behinds,score.homeTeamScore.matchScore.totalScore].join(".");
+            var s2 = [score.awayTeamScore.matchScore.goals,score.awayTeamScore.matchScore.behinds,score.awayTeamScore.matchScore.totalScore].join(".");
+            tm1 += " " + s1;
+            tm2 += " " + s2;
+            if(total1 < total2) {
+              tm2 = bold(tm2);
+            } else if(total1 > total2) {
+              tm1 = bold(tm1);
+            }
+            time = "FINAL";
+            break;
+          case "scheduled":
+            time = date.format("MM/DD hh:mm A") + " EST";
+            break;
+          default:
+            return;
+        }
+        return tm1 + " vs. " + tm2 + " (" + time + ")";
+      }).join("\n");
+    }).then(function(sched) {
+      this.client.say(target, sched);
+      return user.nickname + ' asked for the AFL schedule.';
+    }.bind(this));
+  },
   "mlb": function(data, user, target) {
     var date = getDate(data);
     var showAll = data.split(' ')[0] === '*';
     var year = date.format('YYYY'), month = date.format('MM'), day = date.format('DD');
     var url = 'http://gd2.mlb.com/components/game/mlb/year_' + year + '/month_' + month + '/day_' + day + '/master_scoreboard.json';
-    HTTP.read(url).then(function(b) {
+    return HTTP.read(url).then(function(b) {
       var json = JSON.parse(b.toString('utf8'));
       var games = json.data.games;
-      return games.game.map(function(g) {
-        var tm1 = g.away_name_abbrev;
-        var tm2 = g.home_name_abbrev;
-        var inning, s1, s2;
-        switch(g.status.status.toLowerCase()) {
-          case 'final':
-            if(!showAll) {
-              return;
-            }
-            inning = "Final";
-            s1 = int(g.linescore.r.away);
-            s2 = int(g.linescore.r.home);
-            tm1 += ' ' + s1;
-            tm2 += ' ' + s2;
-            if(s1 < s2) {
-              tm2 = bold(tm2);
-            } else if(s1 > s2) {
-              tm1 = bold(tm1);
-            }
-            break;
-          case 'in progress':
-            inning = g.status.inning_state + " " + humanize.ordinal(g.status.inning);
-            s1 = int(g.linescore.r.away);
-            s2 = int(g.linescore.r.home);
-            tm1 += ' ' + s1;
-            tm2 += ' ' + s2;
-            if(s1 < s2) {
-              tm2 = bold(tm2);
-            } else if(s1 > s2) {
-              tm1 = bold(tm1);
-            }
-            break;
-          default:
-            if(!showAll) {
-              return;
-            }
-            inning = [g.time, g.ampm, g.time_zone].join(' ');
-            break;
-        }
-        return tm1 + ' @ ' + tm2 + " (" + inning + ")";
-      }).join("\n");
+      return games.game.map(baseballMap(showAll)).filter(removeEmpty).join(" | ");
     }).then(function(sched) {
       this.client.say(target, sched);
       return user.nickname + ' asked for the MLB schedule.';
-    }.bind(this)).done();
+    }.bind(this));
+  },
+  "mlbfull": function(data, user, target) {
+    var date = getDate(data);
+    var showAll = data.split(' ')[0] === '*';
+    var year = date.format('YYYY'), month = date.format('MM'), day = date.format('DD');
+    var url = 'http://gd2.mlb.com/components/game/mlb/year_' + year + '/month_' + month + '/day_' + day + '/master_scoreboard.json';
+    return HTTP.read(url).then(function(b) {
+      var json = JSON.parse(b.toString('utf8'));
+      var games = json.data.games;
+      return games.game.map(baseballMap).filter(removeEmpty).join("\n");
+    }).then(function(sched) {
+      this.client.say(target, sched);
+      return user.nickname + ' asked for the MLB schedule.';
+    }.bind(this));
+  },
+  "nfl": function(data, user, target) {
+    var nflWeek = getNFLWeek(data);
+    var url = 'http://www.nfl.com/ajax/scorestrip?season=2014&' + nflWeek;
+    return HTTP.read(url + '&' + new Date().getTime()).then(function(b) {
+      $ = cheerio.load(b.toString('utf8'));
+      var games = $('g');
+      if(games.length === 0) {
+        return 'No games found.';
+      }
+      return Array.prototype.map.call(games, nflMap).join(" | ");
+    }).then(function(sched) {
+      this.client.say(target, sched);
+      return user.nickname + ' asked for the NBA schedule.';
+    }.bind(this));
+  },
+  "nflfull": function(data, user, target) {
+    var nflWeek = getNFLWeek(data);
+    var url = 'http://www.nfl.com/ajax/scorestrip?season=2014&' + nflWeek;
+    return HTTP.read(url + '&' + new Date().getTime()).then(function(b) {
+      $ = cheerio.load(b.toString('utf8'));
+      var games = $('g');
+      if(games.length === 0) {
+        return 'No games found.';
+      }
+      return Array.prototype.map.call(games, nflMap).join("\n");
+    }).then(function(sched) {
+      this.client.say(target, sched);
+      return user.nickname + ' asked for the NBA schedule.';
+    }.bind(this));
   }
 };
