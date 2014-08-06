@@ -7,6 +7,33 @@ var humanize = require('humanize');
 var moment = require('moment-timezone');
 var fuzzy = require('fuzzy');
 
+var currentSeason = (new Date().getFullYear() - 1) + "-" + (new Date().getYear() % 100);
+var getNameAndSeason = function(data) {
+  var season = (new Date().getFullYear() - 1) + "-" + (new Date().getYear() % 100);
+  var matchReg = /(\d{4}(?:\-(\d{4}|\d{2}))?)/g, rangeReg = /^\d{4}\-(\d{4}|\d{2})$/;
+  var possibleDates = data.match(matchReg);
+  if(!possibleDates) {
+    return [data, season];
+  }
+  for(var i = 0; i < possibleDates.length; i++) {
+    data = data.replace(possibleDates[i], '');
+  }
+  var maxYear = 0;
+  for(var i = 0; i < possibleDates.length; i++) {
+    if(possibleDates[i].match(rangeReg)) {
+      if(possibleDates[i].split('-')[1].length === 2) {
+        season = possibleDates[i];
+      } else {
+        season = possibleDates[i].replace('-20','-');
+      }
+      return [data.trim(), season];
+    }
+    maxYear = (parseInt(possibleDates[i], 10) > maxYear) ? parseInt(possibleDates[i], 10) : maxYear;
+  }
+  season = (maxYear - 1) + "-" + (maxYear % 100);
+  return [data.trim(), season];
+};
+
 var getFullPlayerName = function(data) {
   var oneName = data.length === 1 && data[0].toLowerCase();
   return HTTP.read('http://www.hockey-reference.com/player_search.cgi?search=' + data.join('+')).then(function(b) {
@@ -375,6 +402,9 @@ var objToQuery = function(o) {
 
 var zipHash = function(keys, values) {
   var obj = {};
+  if(!values || values.length === 0) {
+    return obj;
+  }
   keys.forEach(function(key, i) {
     obj[key] = values[i];
   });
@@ -777,8 +807,9 @@ module.exports = {
     }.bind(this));
   },
   "nstats": function(data, user, target) {
-    var season = (new Date().getFullYear() - 1) + "-" + (new Date().getYear() % 100);
-    return HTTP.read('http://stats.nba.com/stats/commonallplayers/?LeagueID=00&Season=' + season + '&IsOnlyCurrentSeason=1').then(function(b) {
+    var nd = getNameAndSeason(data), season = nd[1];
+    data = nd[0];
+    return HTTP.read('http://stats.nba.com/stats/commonallplayers/?LeagueID=00&Season=' + season + '&IsOnlyCurrentSeason=' + 1*(season === currentSeason)).then(function(b) {
       return JSON.parse(b.toString()).resultSets[0].rowSet;
     }).then(function(players) {
       var match = players.filter(function(player) {
@@ -829,7 +860,6 @@ module.exports = {
     }).spread(function(stats, profile) {
       var seasonStats = zipHash(stats.resultSets[0].headers, stats.resultSets[0].rowSet[0]);
       var about = zipHash(profile.resultSets[0].headers, profile.resultSets[0].rowSet[0]);
-      console.log(seasonStats);
       var positions = about.POSITION.split("-").map(function(p) { return p[0]; }).join("/");
       var firstLine = [
         about.DISPLAY_FIRST_LAST,
@@ -837,7 +867,7 @@ module.exports = {
         "Out of " + about.SCHOOL,
         "Born " + moment(about.BIRTHDATE).format("MMMM DD, YYYY")
       ];
-      var secondLine = [
+      var secondLine = (JSON.stringify(seasonStats) === "{}") ? [season, about.TEAM_ABBREVIATION, "No stats available."] : [
         season,
         about.TEAM_ABBREVIATION,
         "GP " + seasonStats.GP,
@@ -863,11 +893,12 @@ module.exports = {
       } else {
         console.log(e);
       }
-    });
+    }.bind(this));
   },
   "anstats": function(data, user, target) {
-    var season = (new Date().getFullYear() - 1) + "-" + (new Date().getYear() % 100);
-    return HTTP.read('http://stats.nba.com/stats/commonallplayers/?LeagueID=00&Season=' + season + '&IsOnlyCurrentSeason=1').then(function(b) {
+    var nd = getNameAndSeason(data), season = nd[1];
+    data = nd[0];
+    return HTTP.read('http://stats.nba.com/stats/commonallplayers/?LeagueID=00&Season=' + season + '&IsOnlyCurrentSeason=' + 1*(season === currentSeason)).then(function(b) {
       return JSON.parse(b.toString()).resultSets[0].rowSet;
     }).then(function(players) {
       var match = players.filter(function(player) {
@@ -925,7 +956,7 @@ module.exports = {
         "Out of " + about.SCHOOL,
         "Born " + moment(about.BIRTHDATE).format("MMMM DD, YYYY")
       ];
-      var secondLine = [
+      var secondLine = (JSON.stringify(seasonStats) === "{}") ? [season, about.TEAM_ABBREVIATION, "No stats available."] : [
         season,
         about.TEAM_ABBREVIATION,
         "GP " + seasonStats.GP,
@@ -949,8 +980,9 @@ module.exports = {
     });
   },
   "npstats": function(data, user, target) {
-    var season = (new Date().getFullYear() - 1) + "-" + (new Date().getYear() % 100);
-    return HTTP.read('http://stats.nba.com/stats/commonallplayers/?LeagueID=00&Season=' + season + '&IsOnlyCurrentSeason=1').then(function(b) {
+    var nd = getNameAndSeason(data), season = nd[1];
+    data = nd[0];
+    return HTTP.read('http://stats.nba.com/stats/commonallplayers/?LeagueID=00&Season=' + season + '&IsOnlyCurrentSeason=' + 1*(season === currentSeason)).then(function(b) {
       return JSON.parse(b.toString()).resultSets[0].rowSet;
     }).then(function(players) {
       var match = players.filter(function(player) {
@@ -1001,7 +1033,6 @@ module.exports = {
     }).spread(function(stats, profile) {
       var seasonStats = zipHash(stats.resultSets[0].headers, stats.resultSets[0].rowSet[0]);
       var about = zipHash(profile.resultSets[0].headers, profile.resultSets[0].rowSet[0]);
-      console.log(seasonStats);
       var positions = about.POSITION.split("-").map(function(p) { return p[0]; }).join("/");
       var firstLine = [
         about.DISPLAY_FIRST_LAST,
@@ -1009,7 +1040,7 @@ module.exports = {
         "Out of " + about.SCHOOL,
         "Born " + moment(about.BIRTHDATE).format("MMMM DD, YYYY")
       ];
-      var secondLine = [
+      var secondLine = (JSON.stringify(seasonStats) === "{}") ? [season, about.TEAM_ABBREVIATION, "No stats available."] : [
         season,
         about.TEAM_ABBREVIATION,
         "GP " + seasonStats.GP,
