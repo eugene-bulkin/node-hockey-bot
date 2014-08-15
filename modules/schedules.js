@@ -31,8 +31,8 @@ var getDate = function(data) {
   return date;
 };
 
-var getNFLWeek = function(data) {
-  var ds = data.split(' ');
+var getNFLData = function(data) {
+  var ds = (data === '') ? [] : data.split(' ');
   var numRegex = /^\d+$/, seasonRegex = /^(pre|reg)$/i;
   var weekNums = ds.filter(function(d) {
     return numRegex.test(d);
@@ -40,9 +40,23 @@ var getNFLWeek = function(data) {
   var seasonTypes = ds.filter(function(d) {
     return seasonRegex.test(d);
   });
+  var otherWords = ds.filter(function(d) {
+    return !seasonRegex.test(d) && !numRegex.test(d);
+  });
   var week = (weekNums.length > 0) ? int(weekNums.pop()) : 1;
   var season = (seasonTypes.length > 0) ? seasonTypes.pop().toUpperCase() : 'PRE';
-  return 'week=' + week + '&seasonType=' + season;
+  var tm = (otherWords.length > 0) ? otherWords.pop() : null;
+  return {
+    query: 'week=' + week + '&seasonType=' + season,
+    teamFilter: tm
+  };
+};
+
+var filterTm = function(team) {
+  var t = team.toLowerCase();
+  return function(g) {
+    return [g.h.toLowerCase(), g.v.toLowerCase()].indexOf(t) > -1;
+  };
 };
 
 var removeEmpty = function(e) { return e && e !== ''; };
@@ -92,13 +106,12 @@ var baseballMap = function(showAll) {
 };
 
 var nflMap = function(game) {
-  var data = game.attribs;
-  var date = moment(data.eid.slice(0,-2) + ' ' + data.t + ' PM','YYYYMMDD h:mm A', 'America/New_York');
-  var tm1 = data.v;
-  var tm2 = data.h;
-  var s1 = int(data.vs), s2 = int(data.hs);
+  var date = moment(game.eid.toString(10).slice(0,-2) + ' ' + game.t + ' PM','YYYYMMDD h:mm A', 'America/New_York');
+  var tm1 = game.v;
+  var tm2 = game.h;
+  var s1 = int(game.vs), s2 = int(game.hs);
   var dateStr = date.format('ddd hh:mm A');
-  if(data.q !== 'P') {
+  if(game.q !== 'P') {
     tm1 += ' ' + s1;
     tm2 += ' ' + s2;
     if(s1 < s2) {
@@ -106,10 +119,12 @@ var nflMap = function(game) {
     } else if(s1 > s2) {
       tm1 = bold(tm1);
     }
-    if(data.q === 'F') {
+    if(game.q === 'F') {
       dateStr = 'Final';
+    } else if(game.q === 'H') {
+      dateStr = 'Half';
     } else {
-      dateStr = humanize.ordinal(int(data.q));
+      dateStr = humanize.ordinal(int(game.q));
     }
   }
   return tm1 + " @ " + tm2 + " (" + dateStr + ")";
@@ -330,33 +345,49 @@ module.exports = {
     }.bind(this));
   },
   "nfl": function(data, user, target) {
-    var nflWeek = getNFLWeek(data);
-    var url = 'http://www.nfl.com/ajax/scorestrip?season=2014&' + nflWeek;
+    var nflData = getNFLData(data);
+    //var url = 'http://www.nfl.com/ajax/scorestrip?season=2014&' + nflData.query;
+    var url = "http://www.nfl.com/liveupdate/scorestrip/ss.json?" + nflData.query;
     return HTTP.read(url + '&' + new Date().getTime()).then(function(b) {
-      $ = cheerio.load(b.toString('utf8'));
-      var games = $('g');
+      var json = JSON.parse(b.toString('utf8'));
+      var games = json.gms;
       if(games.length === 0) {
         return 'No games found.';
       }
-      return Array.prototype.map.call(games, nflMap).join(" | ");
+      var games2 = [];
+      if(nflData.teamFilter) {
+        games2 = games.filter(filterTm(nflData.teamFilter));
+      }
+      if(games2.length > 0) {
+        games = games2;
+      }
+      return games.map(nflMap).join(" | ");
     }).then(function(sched) {
       this.client.say(target, sched);
-      return user.nickname + ' asked for the NBA schedule.';
+      return user.nickname + ' asked for the NFL schedule.';
     }.bind(this));
   },
   "nflfull": function(data, user, target) {
-    var nflWeek = getNFLWeek(data);
-    var url = 'http://www.nfl.com/ajax/scorestrip?season=2014&' + nflWeek;
+    var nflData = getNFLData(data);
+    //var url = 'http://www.nfl.com/ajax/scorestrip?season=2014&' + nflData.query;
+    var url = "http://www.nfl.com/liveupdate/scorestrip/ss.json?" + nflData.query;
     return HTTP.read(url + '&' + new Date().getTime()).then(function(b) {
-      $ = cheerio.load(b.toString('utf8'));
-      var games = $('g');
+      var json = JSON.parse(b.toString('utf8'));
+      var games = json.gms;
       if(games.length === 0) {
         return 'No games found.';
       }
-      return Array.prototype.map.call(games, nflMap).join("\n");
+      var games2 = [];
+      if(nflData.teamFilter) {
+        games2 = games.filter(filterTm(nflData.teamFilter));
+      }
+      if(games2.length > 0) {
+        games = games2;
+      }
+      return games.map(nflMap).join("\n");
     }).then(function(sched) {
       this.client.say(target, sched);
-      return user.nickname + ' asked for the NBA schedule.';
+      return user.nickname + ' asked for the NFL schedule.';
     }.bind(this));
   }
 };
