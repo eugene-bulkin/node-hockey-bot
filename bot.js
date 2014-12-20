@@ -123,6 +123,9 @@ Bot.prototype.setupListeners = function() {
   this.client.addListener('registered', function(message) {
     // this server message tells us what nickname we're actually using
     this.currentNick = message.args[0];
+    if(server.auth) {
+      this.client.say('NickServ', 'identify ' + server.auth);
+    }
     this.log('Connected to the server: ' + server.server);
   }.bind(this));
   // This event is sent every time we join a channel.
