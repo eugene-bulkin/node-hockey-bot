@@ -9,7 +9,11 @@ var fuzzy = require('fuzzy');
 
 var currentSeason = (new Date().getFullYear() - 1) + "-" + (new Date().getYear() % 100);
 var getNameAndSeason = function(data) {
-  var season = (new Date().getFullYear() - 1) + "-" + (new Date().getYear() % 100);
+  var year = new Date().getFullYear();
+  if(new Date().getMonth() > 5) {
+    year++;
+  }
+  var season = (year - 1) + "-" + (year % 100);
   var matchReg = /(\d{4}(?:\-(\d{4}|\d{2}))?)/g, rangeReg = /^\d{4}\-(\d{4}|\d{2})$/;
   var possibleDates = data.match(matchReg);
   if(!possibleDates) {
@@ -891,7 +895,7 @@ module.exports = {
         this.client.say(target, 'No player found.');
         return user.nickname + ' searched for NBA player "' + data + '" but no results were found.';
       } else {
-        console.log(e);
+        console.log(JSON.stringify(e));
       }
     }.bind(this));
   },
@@ -977,7 +981,7 @@ module.exports = {
         this.client.say(target, 'No player found.');
         return user.nickname + ' searched for NBA player "' + data + '" but no results were found.';
       }
-    });
+    }.bind(this));
   },
   "npstats": function(data, user, target) {
     var nd = getNameAndSeason(data), season = nd[1];

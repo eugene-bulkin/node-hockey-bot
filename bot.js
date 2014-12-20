@@ -379,5 +379,5 @@ process.on('SIGTERM', function(code) {
 });
 
 process.on('uncaughtException', function(e) {
-  bot.logError("Uncaught exception: " + e);
+  bot.logError("Uncaught exception: " + JSON.stringify(e));
 });
