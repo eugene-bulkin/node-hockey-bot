@@ -359,14 +359,15 @@ var bot = new Bot();
  * cleanly exit the process.
  */
 process.on('SIGINT', function(code) {
+  console.log(this.__proto__);
   Q.all([
-    bot.log("Bot manually killed with SIGINT"),
-    bot.disconnect('Adios!'),
-    bot.cleanUp()
+    this.log("Bot manually killed with SIGINT"),
+    this.disconnect('Adios!'),
+    this.cleanUp()
   ]).done(function() {
     process.exit(code || 1);
   });
-});
+}.bind(bot));
 
 process.on('SIGTERM', function(code) {
   Q.all([
