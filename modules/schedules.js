@@ -224,30 +224,38 @@ module.exports = {
         var hash = zipHash(games.headers, row);
         var homeTeam = teams[hash.HOME_TEAM_ID];
         var awayTeam = teams[hash.VISITOR_TEAM_ID];
-        var futureTime = moment(hash.GAME_STATUS_TEXT, 'h:mm a \\E\\T', 'America/New_York', true);
+        var futureTime = null;
+        try {
+	  futureTime = moment(hash.GAME_STATUS_TEXT, 'h:mm a \\E\\T', 'America/New_York', true);
+        } catch(e) {
+	}
         var dateStr, tm1 = awayTeam.TEAM_ABBREVIATION, tm2 = homeTeam.TEAM_ABBREVIATION;
-        var qtrMatch = hash.GAME_STATUS_TEXT.match(/(Start|End) of (.+) Qtr/i);
-        if(futureTime.isValid()) {
+        var qtrMatch = hash.GAME_STATUS_TEXT.match(/(Start|End) of +(.+) +Qtr/i);
+        if(futureTime) {
           dateStr = futureTime.format('h:mm A') + ' ET';
         } else {
           if(['final', 'halftime'].indexOf(hash.GAME_STATUS_TEXT.toLowerCase()) > -1) {
-            dateStr = hash.GAME_STATUS_TEXT;
+            dateStr = hash.GAME_STATUS_TEXT.trim();
           } else if(qtrMatch) {
-            dateStr = qtrMatch[0] + ' ' + qtrMatch[1];
+            dateStr = qtrMatch[0].trim() + ' ' + qtrMatch[1].trim();
           } else {
-            dateStr = hash.LIVE_PC_TIME + ' ' + hash.GAME_STATUS_TEXT.split(' ')[0];
+            dateStr = hash.LIVE_PC_TIME.trim() + ' ' + hash.GAME_STATUS_TEXT.split(' ')[0].trim();
           }
           var s1 = awayTeam.PTS, s2 = homeTeam.PTS;
-          tm1 += ' ' + s1;
-          tm2 += ' ' + s2;
-          if(s1 < s2) {
-            tm2 = bold(tm2);
-          } else if(s1 > s2) {
-            tm1 = bold(tm1);
+	  if(s1 && s2) {
+            tm1 += ' ' + s1;
+            tm2 += ' ' + s2;
+            if(s1 < s2) {
+              tm2 = bold(tm2);
+            } else if(s1 > s2) {
+              tm1 = bold(tm1);
+            }
           }
         }
-        return tm1 + " @ " + tm2 + ' (' + dateStr + ') [' + hash.NATL_TV_BROADCASTER_ABBREVIATION + ']';
-      }).join("\n");
+        result = tm1 + " @ " + tm2 + ' (' + dateStr.trim() + ')';
+        if(hash.NATL_TV_BROADCASTER_ABBREVIATION) { result += ' [' + hash.NATL_TV_BROADCASTER_ABBREVIATION + ']'; }
+	return result;
+      }).join(" | ");
     }).then(function(sched) {
       this.client.say(target, sched);
       return user.nickname + ' asked for the NBA schedule.';

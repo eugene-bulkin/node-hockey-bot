@@ -352,6 +352,17 @@ Bot.prototype.isAdmin = function(user) {
   return server.admin.indexOf(user.nickname) > -1;
 };
 
+Bot.prototype.isUnscoobable = function(user) {
+  return [
+      "rip",
+      "rip`",
+      "tittler",
+      "tittler`",
+      "hstats",
+      "hstats_",
+    ].indexOf(user.nickname) > -1;
+}
+
 // Create the bot and join the server and relevant channels
 var bot = new Bot();
 
@@ -362,7 +373,6 @@ var bot = new Bot();
  * cleanly exit the process.
  */
 process.on('SIGINT', function(code) {
-  console.log(this.__proto__);
   Q.all([
     this.log("Bot manually killed with SIGINT"),
     this.disconnect('Adios!'),
